@@ -1,0 +1,7 @@
+aws autoscaling complete-lifecycle-action \
+  --lifecycle-hook-name "emareach-backend-production-termination-hook" \
+  --auto-scaling-group-name "emareach-backend-production-asg" \
+  --instance-id "i-0c77881f86d016340" \
+  --lifecycle-action-result CONTINUE \
+  --region us-east-1
+

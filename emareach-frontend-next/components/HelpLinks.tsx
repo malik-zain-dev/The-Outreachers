@@ -1,0 +1,63 @@
+"use client";
+
+import Link from "next/link";
+import { BookOpen } from "lucide-react";
+import { BLOG_LINKS, blogHref } from "@/lib/blog-links";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+type HelpLinksProps = {
+  slugs: string[];
+  title?: string;
+  variant?: "card" | "inline";
+  className?: string;
+};
+
+/**
+ * Renders a list of blog/guide links for the current page.
+ * Use variant="card" for a bordered section, "inline" for a compact line of links.
+ */
+export function HelpLinks({ slugs, title = "Related guides", variant = "card", className = "" }: HelpLinksProps) {
+  const items = slugs
+    .filter((s) => BLOG_LINKS[s])
+    .map((slug) => ({ slug, title: BLOG_LINKS[slug], href: blogHref(slug) }));
+
+  if (items.length === 0) return null;
+
+  if (variant === "inline") {
+    return (
+      <p className={["text-sm text-muted-foreground", className].filter(Boolean).join(" ")}>
+        <span className="font-medium text-foreground">Learn more: </span>
+        {items.map((item, i) => (
+          <span key={item.slug}>
+            {i > 0 && ", "}
+            <Link href={item.href} className="text-primary hover:underline">
+              {item.title}
+            </Link>
+          </span>
+        ))}
+      </p>
+    );
+  }
+
+  return (
+    <Card className={className}>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base font-medium">
+          <BookOpen className="h-4 w-4 text-primary" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <ul className="space-y-2 text-sm">
+          {items.map((item) => (
+            <li key={item.slug}>
+              <Link href={item.href} className="text-primary hover:underline" target="_blank">
+                {item.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
