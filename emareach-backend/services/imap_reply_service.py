@@ -298,9 +298,20 @@ class ImapReplyService:
             for log in logs:
                 if log["id"] in updated_log_ids:
                     continue
-                smtp_id = log.get("smtp_message_id") or ""
-                normalized = _normalize_msg_id(smtp_id)
-                if not normalized or normalized not in reply_to_ids:
+                candidates = {
+                    _normalize_msg_id(log.get("smtp_message_id") or ""),
+                    _normalize_msg_id(log.get("gmail_message_id") or ""),
+                    _normalize_msg_id(log.get("id") or ""),
+                    _normalize_msg_id(f"{log.get('id')}@gmail.com"),
+                }
+                candidates.discard("")
+                matched = any(c in reply_to_ids for c in candidates)
+                if not matched:
+                    # Also check if log id is contained in any reply_to_id
+                    log_id = log.get("id") or ""
+                    if log_id and any(log_id in rid for rid in reply_to_ids):
+                        matched = True
+                if not matched:
                     continue
                 is_auto = _is_auto_reply(body)
                 await self.db.email_logs.update_one(

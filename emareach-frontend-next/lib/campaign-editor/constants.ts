@@ -12,13 +12,20 @@ export const CAMPAIGN_WIZARD_STEPS: { id: number; title: string; icon: LucideIco
 ];
 
 export const TZ_LABELS: Record<string, string> = {
-  "America/New_York": "Eastern Time (ET)",
-  "America/Chicago": "Central Time (CT)",
-  "America/Denver": "Mountain Time (MT)",
-  "America/Los_Angeles": "Pacific Time (PT)",
-  "Europe/London": "London (GMT)",
-  /** IANA deprecated Asia/Calcutta in favor of Asia/Kolkata; normalize API values to Kolkata in UI. */
-  "Asia/Kolkata": "India (IST)",
+  "Asia/Karachi": "Pakistan Time (PKT - UTC+5)",
+  "Asia/Dubai": "Gulf / UAE Time (GST - UTC+4)",
+  "Asia/Riyadh": "Saudi Arabia Time (AST - UTC+3)",
+  "Asia/Kolkata": "India Time (IST - UTC+5:30)",
+  "Asia/Dhaka": "Bangladesh Time (BST - UTC+6)",
+  "Asia/Singapore": "Singapore / Malaysia (SGT - UTC+8)",
+  "Europe/London": "London / UK (GMT / BST)",
+  "Europe/Berlin": "Central European (CET / CEST)",
+  "America/New_York": "Eastern Time (ET - US)",
+  "America/Chicago": "Central Time (CT - US)",
+  "America/Denver": "Mountain Time (MT - US)",
+  "America/Los_Angeles": "Pacific Time (PT - US)",
+  "Australia/Sydney": "Sydney / Australia (AEST)",
+  "UTC": "Coordinated Universal Time (UTC)",
 };
 
 /** 0=Mon … 6=Sun — matches backend (Python weekday). Default Mon–Fri. */

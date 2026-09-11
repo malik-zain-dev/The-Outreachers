@@ -52,12 +52,20 @@ interface CampaignRowProps {
 }
 
 const TZ_LABELS: Record<string, string> = {
+  "Asia/Karachi": "Pakistan Time (PKT)",
+  "Asia/Dubai": "Gulf / UAE (GST)",
+  "Asia/Riyadh": "Saudi Arabia (AST)",
+  "Asia/Kolkata": "India (IST)",
+  "Asia/Dhaka": "Bangladesh (BST)",
+  "Asia/Singapore": "Singapore (SGT)",
+  "Europe/London": "London (GMT)",
+  "Europe/Berlin": "Central European (CET)",
   "America/New_York": "Eastern Time (ET)",
   "America/Chicago": "Central Time (CT)",
   "America/Denver": "Mountain Time (MT)",
   "America/Los_Angeles": "Pacific Time (PT)",
-  "Europe/London": "London (GMT)",
-  "Asia/Kolkata": "India (IST)",
+  "Australia/Sydney": "Sydney (AEST)",
+  "UTC": "UTC",
 };
 
 const localDateShort = new Intl.DateTimeFormat("en-US", {

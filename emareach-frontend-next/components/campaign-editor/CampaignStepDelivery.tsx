@@ -256,12 +256,11 @@ export function CampaignStepDelivery({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="America/New_York">Eastern Time (ET)</SelectItem>
-                <SelectItem value="America/Chicago">Central Time (CT)</SelectItem>
-                <SelectItem value="America/Denver">Mountain Time (MT)</SelectItem>
-                <SelectItem value="America/Los_Angeles">Pacific Time (PT)</SelectItem>
-                <SelectItem value="Europe/London">London (GMT)</SelectItem>
-                <SelectItem value="Asia/Kolkata">India (IST)</SelectItem>
+                {Object.entries(TZ_LABELS).map(([tzValue, tzName]) => (
+                  <SelectItem key={tzValue} value={tzValue}>
+                    {tzName}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <TimeZoneClocks timezone={campaignData.timezone} />

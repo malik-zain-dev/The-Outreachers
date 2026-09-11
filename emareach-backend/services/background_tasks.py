@@ -24,6 +24,7 @@ class BackgroundTasks:
         warmup_sender_service=None,
         warmup_receiver_service=None,
         lifecycle_automation_service=None,
+        email_service=None,
     ):
         self.db = db
         self.domain_service = domain_service
@@ -32,6 +33,7 @@ class BackgroundTasks:
         self.warmup_sender_service = warmup_sender_service
         self.warmup_receiver_service = warmup_receiver_service
         self.lifecycle_automation_service = lifecycle_automation_service
+        self.email_service = email_service
         self.running = False
     
     async def start(self):
@@ -47,6 +49,8 @@ class BackgroundTasks:
             asyncio.create_task(self._shared_pool_credit_settlement_loop())
         if self.warmup_receiver_service is not None:
             asyncio.create_task(self._warmup_receiver_loop())
+        if self.email_service is not None:
+            asyncio.create_task(self._reply_check_loop())
         if self.automation_service is not None:
             asyncio.create_task(self._automation_loop())
             print("[CAMPAIGN_BATCH] background tasks started (automation loop will run every 60s)", flush=True)
@@ -501,4 +505,21 @@ class BackgroundTasks:
             except Exception as e:  # pragma: no cover - defensive logging
                 logging.error(f"Error in automation loop: {e}")
                 print(f"[CAMPAIGN_BATCH] automation loop error: {e}", flush=True)
+                await asyncio.sleep(60)
+
+    async def _reply_check_loop(self):
+        """Periodically check connected inboxes for incoming replies (every 60s)."""
+        while self.running and self.email_service is not None:
+            try:
+                user_ids = await self.db.email_logs.distinct("user_id")
+                for uid in user_ids:
+                    try:
+                        await self.email_service.check_replies(uid)
+                    except Exception as ex:
+                        logging.debug("Auto reply check failed for user %s: %s", uid, ex)
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error("Error in reply check loop: %s", e)
                 await asyncio.sleep(60)

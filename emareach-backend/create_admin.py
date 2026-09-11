@@ -34,12 +34,12 @@ async def create_admin_user():
     result = await admin_db.admin_users.insert_one(admin_user.model_dump())
     
     if result.inserted_id:
-        print("✅ Admin user created successfully!")
+        print("[SUCCESS] Admin user created successfully!")
         print("Email: admin@example.com")
         print("Password: admin123")
-        print("\n⚠️  Remember to change the password in production!")
+        print("\n[NOTE] Remember to change the password in production!")
     else:
-        print("❌ Failed to create admin user")
+        print("[ERROR] Failed to create admin user")
 
 if __name__ == "__main__":
     asyncio.run(create_admin_user())

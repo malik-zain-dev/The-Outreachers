@@ -342,6 +342,7 @@ background_tasks = BackgroundTasks(
     warmup_sender_service=warmup_sender_service,
     warmup_receiver_service=warmup_receiver_service,
     lifecycle_automation_service=lifecycle_automation_service,
+    email_service=email_service,
 )
 
 # Initialize services in route modules

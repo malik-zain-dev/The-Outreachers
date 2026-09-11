@@ -1756,12 +1756,14 @@ Generate a unique variation of the email that maintains the same core message bu
                 "send_source": "campaign",
             }
             
-            # Add Gmail-specific fields if Gmail
-            if sender_type == "gmail":
+            # Add Gmail-specific fields if Gmail OAuth with thread_id, else smtp_message_id for IMAP matching
+            if sender_type == "gmail" and thread_id:
                 email_log["gmail_message_id"] = message_id
                 email_log["gmail_thread_id"] = thread_id
             else:
                 email_log["smtp_message_id"] = message_id
+                if sender_type == "gmail":
+                    email_log["gmail_message_id"] = message_id
 
             # If sent via Email Infra, persist sending IP when available
             if sender_type == "smtp" and isinstance(result, dict) and result.get("provider") == "email_infra":
@@ -4139,22 +4141,28 @@ Generate a unique variation of the email that maintains the same core message bu
         Also includes logs already marked 'replied' but with empty reply_body so we can backfill the body from IMAP."""
         logs = await self.db.email_logs.find({
             "user_id": user_id,
-            "gmail_thread_id": {"$exists": False},
-            "smtp_message_id": {"$exists": True},
             "$or": [
-                {"status": {"$in": ["sent", "opened", "clicked"]}},
-                {"status": "replied", "$or": [{"reply_body": {"$exists": False}}, {"reply_body": ""}, {"reply_body": None}]},
+                {"gmail_thread_id": {"$exists": False}},
+                {"gmail_thread_id": None},
+            ],
+            "$and": [
+                {
+                    "$or": [
+                        {"status": {"$in": ["sent", "opened", "clicked"]}},
+                        {"status": "replied", "$or": [{"reply_body": {"$exists": False}}, {"reply_body": ""}, {"reply_body": None}]},
+                    ]
+                }
             ],
         }).to_list(None)
         if not logs:
             return 0
-        campaign_ids = list({log["campaign_id"] for log in logs})
+        campaign_ids = list({log.get("campaign_id") for log in logs if log.get("campaign_id")})
         campaigns = await self.db.campaigns.find({"id": {"$in": campaign_ids}}, {"id": 1, "reply_to_type": 1, "reply_to_id": 1}).to_list(None)
         campaign_by_id = {c["id"]: c for c in campaigns}
         # Group logs by (reply_to_type, reply_to_id). Legacy = no reply_to_type → use ("gmail", user_id) with credential_id from first user Gmail
         groups = {}
         for log in logs:
-            camp = campaign_by_id.get(log["campaign_id"]) or {}
+            camp = campaign_by_id.get(log.get("campaign_id")) or {}
             rtype = camp.get("reply_to_type")
             rid = camp.get("reply_to_id")
             if rtype == "none":
@@ -4176,23 +4184,28 @@ Generate a unique variation of the email that maintains the same core message bu
                 if self.imap_reply_service and rid:
                     replies_found += await self.imap_reply_service.check_replies_for_config(rid, group_logs)
                 continue
-            # Gmail: use IMAP for app-password inboxes, else Gmail API
-            if rtype == "gmail" and rid and self.imap_reply_service:
+            # Gmail: use IMAP for app-password inboxes, else Gmail OAuth API
+            if rtype == "gmail" and self.imap_reply_service:
                 inbox = await self.db.inboxes.find_one(
-                    {"id": rid, "user_id": user_id, "sender_type": "gmail"},
-                    {"gmail_auth_method": 1},
+                    {"$or": [{"id": rid}, {"user_id": user_id}], "sender_type": "gmail"},
+                    {"id": 1, "gmail_auth_method": 1},
                 )
                 if inbox and inbox.get("gmail_auth_method") == "app_password":
                     replies_found += await self.imap_reply_service.check_replies_for_gmail_app_password_inbox(
-                        rid, group_logs
+                        inbox["id"], group_logs
                     )
                     continue
+
             # Gmail OAuth: resolve credential_id (rid may be inbox id or credential id)
             credential_id = None
             if rid and rid != user_id:
                 inbox = await self.db.inboxes.find_one({"id": rid, "user_id": user_id, "sender_type": "gmail"}, {"gmail_credentials_id": 1})
                 credential_id = inbox.get("gmail_credentials_id") if inbox else rid
-            inbox_msg_ids = await self.gmail_service.list_recent_inbox_message_ids(user_id, max_results=100, credential_id=credential_id)
+            try:
+                inbox_msg_ids = await self.gmail_service.list_recent_inbox_message_ids(user_id, max_results=100, credential_id=credential_id)
+            except Exception as e:
+                logging.debug("Gmail OAuth check_replies skipped for user_id=%s: %s", user_id, e)
+                continue
             if not inbox_msg_ids:
                 continue
             now = datetime.now(timezone.utc)
