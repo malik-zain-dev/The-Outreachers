@@ -77,6 +77,8 @@ from routes import (
     rent_network,
     admin_ryn,
     public_tools,
+    pipelines,
+    deals,
 )
 
 @asynccontextmanager
@@ -138,6 +140,11 @@ async def lifespan(app: FastAPI):
         await db.tickets.create_index("status")
         await db.tickets.create_index("updated_at")
         await db.ticket_comments.create_index("ticket_id")
+        await db.pipelines.create_index("user_id")
+        await db.deals.create_index("user_id")
+        await db.deals.create_index([("user_id", 1), ("pipeline_id", 1), ("stage_id", 1)])
+        await db.deals.create_index([("user_id", 1), ("status", 1)])
+        await db.deals.create_index([("user_id", 1), ("primary_contact_id", 1)])
         await db.tracking_pixels.create_index("email_log_id")
         await db.link_clicks.create_index("email_log_id")
         await db.reply_to_imap_configs.create_index("user_id")
@@ -436,6 +443,8 @@ api_router.include_router(rent_network.router)
 api_router.include_router(admin_ryn.router)
 public_tools.init_public_tools(admin_db=admin_db, db=db, smtp_service=smtp_service)
 api_router.include_router(public_tools.router)
+api_router.include_router(pipelines.router)
+api_router.include_router(deals.router)
 
 # Include the API router in the main app
 app.include_router(api_router)

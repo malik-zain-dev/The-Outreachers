@@ -238,11 +238,12 @@ async def create_smart_leads_run(
             status_code=503,
             detail="Add your Serper API key in Settings → Integrations (Integrations tab) to run Smart Leads.",
         )
-    if not await get_zerobounce_api_key_for_user(user_id):
-        raise HTTPException(
-            status_code=503,
-            detail="Add your ZeroBounce API key in Settings → Integrations (ZeroBounce) to run Smart Leads.",
-        )
+    # ZeroBounce is optional (used for extra validation if present)
+    zb_key = await get_zerobounce_api_key_for_user(user_id)
+    if zb_key:
+        logging.info("Smart Leads run starting with ZeroBounce enabled for user %s", user_id)
+    else:
+        logging.info("Smart Leads run starting with internal email validator for user %s", user_id)
 
     run_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -296,11 +297,6 @@ async def continue_smart_leads_run(
         raise HTTPException(
             status_code=503,
             detail="Add your Serper API key in Settings → Integrations (Integrations tab) to run Smart Leads.",
-        )
-    if not await get_zerobounce_api_key_for_user(user_id):
-        raise HTTPException(
-            status_code=503,
-            detail="Add your ZeroBounce API key in Settings → Integrations (ZeroBounce) to run Smart Leads.",
         )
 
     _launch_pipeline_task(run_id, resume=True)

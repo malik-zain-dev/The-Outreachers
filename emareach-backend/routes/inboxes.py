@@ -598,7 +598,42 @@ async def get_inboxes(request: Request, user_id: str, current_user: dict = Depen
                 }
             return stats
 
-        warmup_stats = await _warmup_7d_stats()
+        today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        async def _today_sent_stats() -> dict[str, int]:
+            pipeline = [
+                {
+                    "$match": {
+                        "inbox_id": {"$in": inbox_ids},
+                        "sent_at": {"$gte": today_midnight},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$inbox_id",
+                        "count": {"$sum": 1},
+                    }
+                }
+            ]
+            warmup_today_rows, email_today_rows = await asyncio.gather(
+                db.warmup_sent.aggregate(pipeline).to_list(None),
+                db.email_logs.aggregate(pipeline).to_list(None),
+            )
+            today_counts: dict[str, int] = {iid: 0 for iid in inbox_ids}
+            for row in warmup_today_rows:
+                iid = row.get("_id")
+                if iid in today_counts:
+                    today_counts[iid] += (row.get("count", 0) or 0)
+            for row in email_today_rows:
+                iid = row.get("_id")
+                if iid in today_counts:
+                    today_counts[iid] += (row.get("count", 0) or 0)
+            return today_counts
+
+        warmup_stats, today_stats = await asyncio.gather(
+            _warmup_7d_stats(),
+            _today_sent_stats(),
+        )
 
         for inbox in inboxes:
             iid = inbox.get("id")
@@ -606,6 +641,8 @@ async def get_inboxes(request: Request, user_id: str, current_user: dict = Depen
                 continue
             inbox["warmup_warning"] = False
             inbox["warm_up_required"] = False
+            inbox["sent_today"] = today_stats.get(iid, 0)
+            inbox["daily_limit"] = inbox.get("daily_limit") or 50
             stats = warmup_stats.get(iid)
             if stats:
                 inbox.update(stats)

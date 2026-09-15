@@ -14,7 +14,18 @@ from services.excel_service import ExcelService, UploadContactError, MAX_UPLOAD_
 from services.email_validation import validate_email_full
 from services.zerobounce_helpers import get_zerobounce_api_key_for_user
 from routes.region import get_client_ip
-from routes.schemas import ContactsSaveRequest, DeleteContactsRequest, CreateContactRequest, UpdateContactRequest, UnblockContactsRequest, BlockContactsRequest
+from routes.schemas import (
+    ContactsSaveRequest,
+    DeleteContactsRequest,
+    CreateContactRequest,
+    UpdateContactRequest,
+    UnblockContactsRequest,
+    BlockContactsRequest,
+    ContactsImportCSVRequest,
+    ContactEnrichRequest,
+    BulkActionRequest,
+)
+from services.serper_helpers import get_serper_api_key_for_user, serper_search
 from routes.contact_lists import _raise_if_list_used_by_active_campaign, raise_if_any_list_used_by_active_campaign
 from services.notification_service import notification_service
 
@@ -212,19 +223,158 @@ async def save_contacts(request: ContactsSaveRequest, current_user: dict = Depen
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/contacts")
-async def get_contacts(skip: int = 0, limit: int = 100, current_user: dict = Depends(get_current_user)):
-    """Get all contacts for user, with sent_count and blocked for display."""
+async def get_contacts(
+    skip: int = 0,
+    limit: int = 50,
+    search: str | None = None,
+    list_id: str | None = None,
+    source: str | None = None,
+    status: str | None = None,
+    company: str | None = None,
+    industry: str | None = None,
+    location: str | None = None,
+    has_email: bool | None = None,
+    has_phone: bool | None = None,
+    has_linkedin: bool | None = None,
+    has_website: bool | None = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get contacts for user with rich composable filtering, multi-field search, and pagination."""
     user_id = current_user["id"]
+    and_conditions: list[dict] = [{"user_id": user_id}]
+
+    # 1. Search across multiple fields (first_name, last_name, email, company, title, industry, location, phone, linkedin_url, website_url)
+    if search and search.strip():
+        raw_search = search.strip()
+        terms = raw_search.split()
+        for term in terms:
+            escaped = re.escape(term)
+            and_conditions.append({
+                "$or": [
+                    {"first_name": {"$regex": escaped, "$options": "i"}},
+                    {"last_name": {"$regex": escaped, "$options": "i"}},
+                    {"email": {"$regex": escaped, "$options": "i"}},
+                    {"company": {"$regex": escaped, "$options": "i"}},
+                    {"title": {"$regex": escaped, "$options": "i"}},
+                    {"industry": {"$regex": escaped, "$options": "i"}},
+                    {"location": {"$regex": escaped, "$options": "i"}},
+                    {"phone": {"$regex": escaped, "$options": "i"}},
+                    {"linkedin_url": {"$regex": escaped, "$options": "i"}},
+                    {"website_url": {"$regex": escaped, "$options": "i"}},
+                ]
+            })
+
+    # 2. List filter
+    if list_id and list_id.strip():
+        contact_list = await db.contact_lists.find_one(
+            {"id": list_id.strip(), "user_id": user_id},
+            {"contact_ids": 1}
+        )
+        c_ids = (contact_list or {}).get("contact_ids", [])
+        and_conditions.append({"id": {"$in": c_ids}})
+
+    # 3. Source filter
+    if source and source.strip():
+        and_conditions.append({"source": source.strip()})
+
+    # 4. Status filter
+    if status and status.strip():
+        and_conditions.append({"status": status.strip()})
+
+    # 5. Company filter
+    if company and company.strip():
+        and_conditions.append({"company": {"$regex": re.escape(company.strip()), "$options": "i"}})
+
+    # 6. Industry filter
+    if industry and industry.strip():
+        and_conditions.append({"industry": {"$regex": re.escape(industry.strip()), "$options": "i"}})
+
+    # 7. Location filter
+    if location and location.strip():
+        and_conditions.append({"location": {"$regex": re.escape(location.strip()), "$options": "i"}})
+
+    # 8. Boolean presence filters (Has Email, Has Phone, Has LinkedIn, Has Website)
+    if has_email is not None:
+        if has_email:
+            and_conditions.append({
+                "email": {"$exists": True, "$ne": None, "$nin": ["", None]}
+            })
+        else:
+            and_conditions.append({
+                "$or": [
+                    {"email": {"$exists": False}},
+                    {"email": None},
+                    {"email": ""},
+                ]
+            })
+
+    if has_phone is not None:
+        if has_phone:
+            and_conditions.append({
+                "phone": {"$exists": True, "$ne": None, "$nin": ["", None]}
+            })
+        else:
+            and_conditions.append({
+                "$or": [
+                    {"phone": {"$exists": False}},
+                    {"phone": None},
+                    {"phone": ""},
+                ]
+            })
+
+    if has_linkedin is not None:
+        if has_linkedin:
+            and_conditions.append({
+                "linkedin_url": {"$exists": True, "$ne": None, "$nin": ["", None]}
+            })
+        else:
+            and_conditions.append({
+                "$or": [
+                    {"linkedin_url": {"$exists": False}},
+                    {"linkedin_url": None},
+                    {"linkedin_url": ""},
+                ]
+            })
+
+    if has_website is not None:
+        if has_website:
+            and_conditions.append({
+                "website_url": {"$exists": True, "$ne": None, "$nin": ["", None]}
+            })
+        else:
+            and_conditions.append({
+                "$or": [
+                    {"website_url": {"$exists": False}},
+                    {"website_url": None},
+                    {"website_url": ""},
+                ]
+            })
+
+    query = {"$and": and_conditions} if len(and_conditions) > 1 else and_conditions[0]
+    total = await db.contacts.count_documents(query)
     contacts = await db.contacts.find(
-        {"user_id": user_id},
+        query,
         {"_id": 0}
-    ).skip(skip).limit(limit).to_list(None)
-    
-    total = await db.contacts.count_documents({"user_id": user_id})
-    
+    ).sort("created_at", -1).skip(max(0, skip)).limit(min(max(1, limit), 200)).to_list(None)
+
     if not contacts:
         return {"contacts": [], "total": total}
-    
+
+    # Fetch all user lists to map list names/IDs to contacts
+    all_lists = await db.contact_lists.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "name": 1, "contact_ids": 1}
+    ).to_list(None)
+
+    list_map: dict[str, list[dict]] = {}
+    for l in all_lists:
+        lid = l["id"]
+        lname = l.get("name", "Unnamed")
+        for cid in l.get("contact_ids", []):
+            if cid not in list_map:
+                list_map[cid] = []
+            list_map[cid].append({"id": lid, "name": lname})
+
     contact_ids = [c["id"] for c in contacts]
     pipeline = [
         {"$match": {"user_id": user_id, "contact_id": {"$in": contact_ids}, "status": {"$in": ["sent", "opened", "clicked", "replied"]}}},
@@ -233,42 +383,65 @@ async def get_contacts(skip: int = 0, limit: int = 100, current_user: dict = Dep
     counts_cursor = await db.email_logs.aggregate(pipeline).to_list(None)
     global_sent = {x["_id"]: x["count"] for x in counts_cursor}
     verified_statuses = ["opened", "clicked", "replied"]
+
     for c in contacts:
         cid = c["id"]
         c["sent_count"] = global_sent.get(cid, 0)
-        status = (c.get("status") or "pending").lower()
+        c_status = (c.get("status") or "active").lower()
         manual_unblock = c.get("manual_unblock", False)
         c["blocked"] = (
-            status == "unsubscribed"
-            or status == "blocked"
+            c_status == "unsubscribed"
+            or c_status == "blocked"
             or (
                 not manual_unblock
-                and status not in verified_statuses
+                and c_status not in verified_statuses
                 and c["sent_count"] >= BLOCK_AFTER_EMAILS
             )
         )
-    
+        c["lists"] = list_map.get(cid, [])
+
     return {"contacts": contacts, "total": total}
+
 
 @router.post("/contacts")
 async def create_contact(request: CreateContactRequest, current_user: dict = Depends(get_current_user)):
-    """Create a new contact"""
+    """Create a new contact with complete profile properties."""
     user_id = current_user["id"]
+    contact_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+
     contact = {
-        "id": str(uuid.uuid4()),
+        "id": contact_id,
         "user_id": user_id,
-        "email": request.email,
-        "first_name": request.first_name,
-        "last_name": request.last_name,
-        "company": request.company,
-        "industry": request.industry,
+        "email": (request.email or "").strip() or None,
+        "first_name": (request.first_name or "").strip() or None,
+        "last_name": (request.last_name or "").strip() or None,
+        "phone": (request.phone or "").strip() or None,
+        "company": (request.company or "").strip() or None,
+        "title": (request.title or "").strip() or None,
+        "industry": (request.industry or "").strip() or None,
+        "location": (request.location or "").strip() or None,
+        "linkedin_url": (request.linkedin_url or "").strip() or None,
+        "website_url": (request.website_url or "").strip() or None,
+        "status": request.status or "active",
+        "source": request.source or "manual",
         "custom_fields": request.custom_fields or {},
-        "status": "pending",
-        "created_at": datetime.now(timezone.utc)
+        "created_at": now,
+        "updated_at": now,
     }
     await db.contacts.insert_one(contact)
     contact.pop("_id", None)
+
+    # If list_ids specified, add to lists
+    if request.list_ids:
+        for lid in request.list_ids:
+            await db.contact_lists.update_one(
+                {"id": lid, "user_id": user_id},
+                {"$addToSet": {"contact_ids": contact_id}}
+            )
+
     return contact
+
 
 @router.put("/contacts/{contact_id}")
 async def update_contact(
@@ -276,32 +449,401 @@ async def update_contact(
     request: UpdateContactRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Update a contact"""
+    """Update contact attributes."""
     user_id = current_user["id"]
-    update_data = {"updated_at": datetime.now(timezone.utc)}
-    
+    update_data: dict = {"updated_at": datetime.now(timezone.utc)}
+
     if request.email is not None:
-        update_data["email"] = request.email
+        update_data["email"] = request.email.strip() if request.email else None
     if request.first_name is not None:
-        update_data["first_name"] = request.first_name
+        update_data["first_name"] = request.first_name.strip() if request.first_name else None
     if request.last_name is not None:
-        update_data["last_name"] = request.last_name
+        update_data["last_name"] = request.last_name.strip() if request.last_name else None
+    if request.phone is not None:
+        update_data["phone"] = request.phone.strip() if request.phone else None
     if request.company is not None:
-        update_data["company"] = request.company
+        update_data["company"] = request.company.strip() if request.company else None
+    if request.title is not None:
+        update_data["title"] = request.title.strip() if request.title else None
     if request.industry is not None:
-        update_data["industry"] = request.industry
+        update_data["industry"] = request.industry.strip() if request.industry else None
+    if request.location is not None:
+        update_data["location"] = request.location.strip() if request.location else None
+    if request.linkedin_url is not None:
+        update_data["linkedin_url"] = request.linkedin_url.strip() if request.linkedin_url else None
+    if request.website_url is not None:
+        update_data["website_url"] = request.website_url.strip() if request.website_url else None
+    if request.status is not None:
+        update_data["status"] = request.status
+    if request.source is not None:
+        update_data["source"] = request.source
     if request.custom_fields is not None:
         update_data["custom_fields"] = request.custom_fields
-    
+
     result = await db.contacts.update_one(
         {"id": contact_id, "user_id": user_id},
         {"$set": update_data}
     )
-    
+
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Contact not found")
-    
+
+    if request.list_ids is not None:
+        # Sync list memberships
+        await db.contact_lists.update_many(
+            {"user_id": user_id},
+            {"$pull": {"contact_ids": contact_id}}
+        )
+        if request.list_ids:
+            await db.contact_lists.update_many(
+                {"id": {"$in": request.list_ids}, "user_id": user_id},
+                {"$addToSet": {"contact_ids": contact_id}}
+            )
+
     return {"message": "Contact updated"}
+
+
+@router.post("/contacts/import-csv")
+async def import_csv_contacts(request: ContactsImportCSVRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Import contacts with customizable column mapping, preview verification,
+    and non-destructive duplicate handling ('update', 'skip', 'keep_both').
+    """
+    user_id = current_user["id"]
+    rows = request.contacts_data or []
+    mapping = request.field_mapping or {}
+    strategy = request.duplicate_strategy or "update"
+    now = datetime.now(timezone.utc)
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No contact data provided for import.")
+
+    imported_count = 0
+    updated_count = 0
+    skipped_count = 0
+    assigned_contact_ids: list[str] = []
+
+    for row in rows:
+        # Extract mapped values
+        def get_val(target_key: str) -> str | None:
+            for src_col, tgt_key in mapping.items():
+                if tgt_key == target_key:
+                    val = row.get(src_col)
+                    if val is not None and str(val).strip():
+                        return str(val).strip()
+            return None
+
+        email = get_val("email")
+        first_name = get_val("first_name")
+        last_name = get_val("last_name")
+        phone = get_val("phone")
+        company = get_val("company")
+        title = get_val("title")
+        industry = get_val("industry")
+        location = get_val("location")
+        linkedin_url = get_val("linkedin_url")
+        website_url = get_val("website_url")
+
+        # Custom fields for unmapped or explicitly custom mapped keys
+        custom_fields: dict[str, Any] = {}
+        for src_col, tgt_key in mapping.items():
+            if tgt_key.startswith("custom_") or tgt_key == "custom":
+                val = row.get(src_col)
+                if val is not None and str(val).strip():
+                    custom_fields[src_col] = str(val).strip()
+
+        # Duplicate check by email if email exists
+        existing = None
+        if email:
+            existing = await db.contacts.find_one({
+                "user_id": user_id,
+                "email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}
+            })
+
+        if existing:
+            if strategy == "skip":
+                skipped_count += 1
+                assigned_contact_ids.append(existing["id"])
+                continue
+            elif strategy == "update":
+                # Non-destructive merge: update only fields that have values in the new data
+                update_set: dict[str, Any] = {"updated_at": now}
+                if first_name and not existing.get("first_name"):
+                    update_set["first_name"] = first_name
+                if last_name and not existing.get("last_name"):
+                    update_set["last_name"] = last_name
+                if phone and not existing.get("phone"):
+                    update_set["phone"] = phone
+                if company and not existing.get("company"):
+                    update_set["company"] = company
+                if title and not existing.get("title"):
+                    update_set["title"] = title
+                if industry and not existing.get("industry"):
+                    update_set["industry"] = industry
+                if location and not existing.get("location"):
+                    update_set["location"] = location
+                if linkedin_url and not existing.get("linkedin_url"):
+                    update_set["linkedin_url"] = linkedin_url
+                if website_url and not existing.get("website_url"):
+                    update_set["website_url"] = website_url
+                if custom_fields:
+                    merged_custom = existing.get("custom_fields", {}) or {}
+                    merged_custom.update(custom_fields)
+                    update_set["custom_fields"] = merged_custom
+
+                await db.contacts.update_one({"id": existing["id"]}, {"$set": update_set})
+                updated_count += 1
+                assigned_contact_ids.append(existing["id"])
+                continue
+            # keep_both falls through to insert new contact
+
+        # Insert new contact
+        new_id = str(uuid.uuid4())
+        doc = {
+            "id": new_id,
+            "user_id": user_id,
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone": phone,
+            "company": company,
+            "title": title,
+            "industry": industry,
+            "location": location,
+            "linkedin_url": linkedin_url,
+            "website_url": website_url,
+            "status": "active",
+            "source": "csv_import",
+            "custom_fields": custom_fields,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.contacts.insert_one(doc)
+        imported_count += 1
+        assigned_contact_ids.append(new_id)
+
+    # Assign to list if requested
+    out_list_id = None
+    out_list_name = None
+    if request.list_id and assigned_contact_ids:
+        existing_list = await db.contact_lists.find_one({"id": request.list_id, "user_id": user_id})
+        if existing_list:
+            await db.contact_lists.update_one(
+                {"id": request.list_id},
+                {"$addToSet": {"contact_ids": {"$each": assigned_contact_ids}}}
+            )
+            out_list_id = existing_list["id"]
+            out_list_name = existing_list.get("name")
+    elif request.list_name and request.list_name.strip() and assigned_contact_ids:
+        lname = request.list_name.strip()
+        existing_list = await db.contact_lists.find_one({
+            "user_id": user_id,
+            "name": {"$regex": f"^{re.escape(lname)}$", "$options": "i"}
+        })
+        if existing_list:
+            await db.contact_lists.update_one(
+                {"id": existing_list["id"]},
+                {"$addToSet": {"contact_ids": {"$each": assigned_contact_ids}}}
+            )
+            out_list_id = existing_list["id"]
+            out_list_name = existing_list.get("name")
+        else:
+            new_list = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "name": lname,
+                "contact_ids": assigned_contact_ids,
+                "created_at": now,
+                "updated_at": now,
+            }
+            await db.contact_lists.insert_one(new_list)
+            out_list_id = new_list["id"]
+            out_list_name = new_list["name"]
+
+    return {
+        "message": f"Successfully processed {len(rows)} contacts",
+        "total_rows": len(rows),
+        "imported": imported_count,
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "list_id": out_list_id,
+        "list_name": out_list_name,
+    }
+
+
+@router.post("/contacts/enrich")
+async def enrich_contacts(request: ContactEnrichRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Search and enrich missing contact info (Email, Phone, LinkedIn, Website) via live Serper search.
+    STRICT: Zero data fabrication. If verifiable data is not found, leaves field empty.
+    """
+    user_id = current_user["id"]
+    contact_ids = request.contact_ids or []
+    fields = request.fields_to_enrich or ["email", "phone", "linkedin_url", "website_url"]
+
+    if not contact_ids:
+        raise HTTPException(status_code=400, detail="No contact IDs provided for enrichment.")
+
+    api_key = request.serper_api_key or await get_serper_api_key_for_user(user_id)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Serper API key is required for enrichment. Please configure it in Settings or pass serper_api_key.",
+        )
+
+    contacts = await db.contacts.find(
+        {"id": {"$in": contact_ids}, "user_id": user_id},
+        {"_id": 0}
+    ).to_list(None)
+
+    results = []
+    enriched_count = 0
+
+    EMAIL_REGEX = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b')
+    PHONE_REGEX = re.compile(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
+    LINKEDIN_REGEX = re.compile(r'https?://(?:[a-z]{2,3}\.)?linkedin\.com/(?:in|company)/[a-zA-Z0-9_-]+')
+
+    for contact in contacts:
+        cid = contact["id"]
+        fname = contact.get("first_name") or ""
+        lname = contact.get("last_name") or ""
+        comp = contact.get("company") or ""
+        loc = contact.get("location") or ""
+        title = contact.get("title") or ""
+
+        # Build targeted query
+        query_parts = []
+        if fname or lname:
+            query_parts.append(f'"{fname} {lname}".strip()')
+        if comp:
+            query_parts.append(f'"{comp}"')
+        if loc:
+            query_parts.append(loc)
+        query_parts.append("contact email phone linkedin")
+        search_query = " ".join(query_parts)
+
+        found_updates: dict[str, Any] = {}
+
+        try:
+            serper_res = await serper_search(api_key=api_key, q=search_query, num=10)
+            organic = serper_res.get("organic", [])
+
+            for item in organic:
+                snippet = item.get("snippet", "") + " " + item.get("title", "")
+                link = item.get("link", "")
+
+                # 1. LinkedIn extraction
+                if "linkedin_url" in fields and not contact.get("linkedin_url") and not found_updates.get("linkedin_url"):
+                    l_match = LINKEDIN_REGEX.search(link) or LINKEDIN_REGEX.search(snippet)
+                    if l_match:
+                        found_updates["linkedin_url"] = l_match.group(0)
+
+                # 2. Email extraction
+                if "email" in fields and not contact.get("email") and not found_updates.get("email"):
+                    e_matches = EMAIL_REGEX.findall(snippet)
+                    # Filter out common false positives
+                    valid_e = [e for e in e_matches if not any(bad in e.lower() for bad in ["example.com", "sentry.io", "domain.com", "email.com"])]
+                    if valid_e:
+                        found_updates["email"] = valid_e[0]
+
+                # 3. Phone extraction
+                if "phone" in fields and not contact.get("phone") and not found_updates.get("phone"):
+                    p_matches = PHONE_REGEX.findall(snippet)
+                    if p_matches:
+                        found_updates["phone"] = p_matches[0]
+
+                # 4. Website extraction
+                if "website_url" in fields and not contact.get("website_url") and not found_updates.get("website_url"):
+                    if comp and comp.lower().replace(" ", "") in link.lower() and "linkedin.com" not in link and "facebook.com" not in link:
+                        found_updates["website_url"] = link
+
+            if found_updates:
+                found_updates["updated_at"] = datetime.now(timezone.utc)
+                found_updates["last_enriched_at"] = datetime.now(timezone.utc)
+                await db.contacts.update_one(
+                    {"id": cid, "user_id": user_id},
+                    {"$set": found_updates}
+                )
+                enriched_count += 1
+                results.append({
+                    "contact_id": cid,
+                    "status": "enriched",
+                    "enriched_fields": found_updates,
+                })
+            else:
+                results.append({
+                    "contact_id": cid,
+                    "status": "no_data_found",
+                    "enriched_fields": {},
+                })
+
+        except Exception as err:
+            results.append({
+                "contact_id": cid,
+                "status": "error",
+                "error": str(err),
+            })
+
+    return {
+        "message": f"Enrichment finished for {len(contacts)} contacts.",
+        "enriched_count": enriched_count,
+        "results": results,
+    }
+
+
+@router.post("/contacts/bulk-action")
+async def bulk_action_contacts(request: BulkActionRequest, current_user: dict = Depends(get_current_user)):
+    """Execute bulk actions: delete, add_to_list, remove_from_list, change_status."""
+    user_id = current_user["id"]
+    action = request.action
+    c_ids = request.contact_ids or []
+
+    if not c_ids:
+        raise HTTPException(status_code=400, detail="No contacts specified for bulk action.")
+
+    if action == "delete":
+        # Check active campaigns
+        lists_with_any = await db.contact_lists.find(
+            {"contact_ids": {"$in": c_ids}},
+            {"id": 1}
+        ).to_list(None)
+        list_ids = [lst["id"] for lst in lists_with_any]
+        await raise_if_any_list_used_by_active_campaign(list_ids)
+        await db.contacts.delete_many({"id": {"$in": c_ids}, "user_id": user_id})
+        await db.contact_lists.update_many(
+            {},
+            {"$pull": {"contact_ids": {"$in": c_ids}}}
+        )
+        return {"message": f"Deleted {len(c_ids)} contacts."}
+
+    elif action == "add_to_list":
+        if not request.list_id:
+            raise HTTPException(status_code=400, detail="list_id is required to add contacts to a list.")
+        await db.contact_lists.update_one(
+            {"id": request.list_id, "user_id": user_id},
+            {"$addToSet": {"contact_ids": {"$each": c_ids}}}
+        )
+        return {"message": f"Added {len(c_ids)} contacts to list."}
+
+    elif action == "remove_from_list":
+        if not request.list_id:
+            raise HTTPException(status_code=400, detail="list_id is required to remove contacts from a list.")
+        await db.contact_lists.update_one(
+            {"id": request.list_id, "user_id": user_id},
+            {"$pull": {"contact_ids": {"$in": c_ids}}}
+        )
+        return {"message": f"Removed {len(c_ids)} contacts from list."}
+
+    elif action == "change_status":
+        if not request.status:
+            raise HTTPException(status_code=400, detail="status is required to change contact status.")
+        await db.contacts.update_many(
+            {"id": {"$in": c_ids}, "user_id": user_id},
+            {"$set": {"status": request.status, "updated_at": datetime.now(timezone.utc)}}
+        )
+        return {"message": f"Updated status to {request.status} for {len(c_ids)} contacts."}
+
+    raise HTTPException(status_code=400, detail=f"Unsupported action '{action}'")
 
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(contact_id: str, current_user: dict = Depends(get_current_user)):

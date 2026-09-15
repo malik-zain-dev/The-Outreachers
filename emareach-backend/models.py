@@ -968,3 +968,116 @@ class RYNWithdrawRequest(BaseModel):
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ============================================================================
+# CRM PIPELINE & DEALS DATA MODELS
+# ============================================================================
+
+class PipelineStage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    order: int = 0
+    probability: int = 50  # 0 to 100
+    color: str = "indigo"  # slate, blue, cyan, indigo, purple, amber, emerald, rose
+    is_won_stage: bool = False
+    is_lost_stage: bool = False
+    archived: bool = False
+
+
+class Pipeline(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    name: str = "Standard Sales Pipeline"
+    is_default: bool = True
+    stages: List[PipelineStage] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CRMTask(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    due_date: Optional[str] = None  # YYYY-MM-DD
+    assigned_to: Optional[str] = "Zain Malik"
+    completed: bool = False
+    completed_at: Optional[datetime] = None
+    priority: str = "medium"  # low, medium, high, urgent
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CRMNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    author_id: Optional[str] = None
+    author_name: str = "Zain Malik"
+    text: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CRMActivity(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    type: str  # stage_change, status_change, call, email, meeting, note, task, deal_created
+    title: str
+    description: Optional[str] = None
+    author_name: str = "System"
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class Deal(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str
+    pipeline_id: str
+    stage_id: str
+    status: str = "open"  # open, won, lost
+    
+    # Associated Company & Contact
+    company_id: Optional[str] = None
+    company: str = "Enterprise"
+    primary_contact_id: Optional[str] = None
+    contact_name: str = "Decision Maker"
+    contact_email: str = ""
+    contact_role: Optional[str] = "Executive"
+    additional_contact_ids: List[str] = Field(default_factory=list)
+
+    # Opportunity Financials & Probability
+    value: float = 10000.0
+    currency: str = "USD"
+    probability: int = 50  # 0 to 100
+    weighted_value: float = 5000.0
+
+    # Lifecycle Dates & Outcome
+    expected_close_date: Optional[str] = None  # YYYY-MM-DD
+    actual_closed_date: Optional[str] = None   # YYYY-MM-DD
+    loss_reason: Optional[str] = None
+    source: str = "Outbound Campaign"  # AI Lead Generation, Outbound Campaign, Website, Referral, Manual
+
+    # Assignment & Categorization
+    owner_id: Optional[str] = None
+    assigned_to: str = "Zain Malik"
+    priority: str = "medium"  # low, medium, high, urgent
+    tags: List[str] = Field(default_factory=list)
+    custom_fields: Dict[str, Any] = Field(default_factory=dict)
+
+    # Sub-records
+    notes: List[CRMNote] = Field(default_factory=list)
+    tasks: List[CRMTask] = Field(default_factory=list)
+    activities: List[CRMActivity] = Field(default_factory=list)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+

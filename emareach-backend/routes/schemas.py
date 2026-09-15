@@ -23,20 +23,54 @@ class BlockContactsRequest(BaseModel):
     contact_ids: List[str]
 
 class CreateContactRequest(BaseModel):
-    email: str
+    email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    phone: Optional[str] = None
     company: Optional[str] = None
+    title: Optional[str] = None
     industry: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    website_url: Optional[str] = None
+    status: Optional[str] = "active"
+    source: Optional[str] = "manual"
+    list_ids: Optional[List[str]] = None
     custom_fields: Optional[Dict[str, Any]] = None
 
 class UpdateContactRequest(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    phone: Optional[str] = None
     company: Optional[str] = None
+    title: Optional[str] = None
     industry: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    website_url: Optional[str] = None
+    status: Optional[str] = None
+    source: Optional[str] = None
+    list_ids: Optional[List[str]] = None
     custom_fields: Optional[Dict[str, Any]] = None
+
+class ContactsImportCSVRequest(BaseModel):
+    contacts_data: List[Dict[str, Any]]
+    field_mapping: Dict[str, str]
+    list_name: Optional[str] = None
+    list_id: Optional[str] = None
+    duplicate_strategy: Optional[Literal["update", "skip", "keep_both"]] = "update"
+
+class ContactEnrichRequest(BaseModel):
+    contact_ids: List[str]
+    fields_to_enrich: Optional[List[str]] = ["email", "phone", "linkedin_url", "website_url"]
+    serper_api_key: Optional[str] = None
+
+class BulkActionRequest(BaseModel):
+    action: Literal["delete", "add_to_list", "remove_from_list", "change_status"]
+    contact_ids: List[str]
+    list_id: Optional[str] = None
+    status: Optional[str] = None
 
 class CreateContactListRequest(BaseModel):
     user_id: str
